@@ -1,0 +1,50 @@
+Config {
+    scoring: Some(
+        ScoringConfig {
+            base_score: Some(
+                100.0,
+            ),
+            age: Some(
+                "+1 per 1h",
+            ),
+            approvals: Some(
+                "+10 per 1",
+            ),
+            size: Some(
+                SizeConfig {
+                    exclude: None,
+                    buckets: Some(
+                        [
+                            SizeBucket {
+                                range: "<100",
+                                effect: "x5",
+                            },
+                            SizeBucket {
+                                range: "100-500",
+                                effect: "x1",
+                            },
+                            SizeBucket {
+                                range: ">500",
+                                effect: "x0.5",
+                            },
+                        ],
+                    ),
+                },
+            ),
+            labels: None,
+            previously_reviewed: None,
+            draft: None,
+        },
+    ),
+    queries: [
+        QueryConfig {
+            name: Some(
+                "Query 1",
+            ),
+            query: "review-requested:@me review:required is:open",
+            scoring: None,
+        },
+    ],
+    auto_refresh_interval: 300,
+    theme: "auto",
+}

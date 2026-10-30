@@ -1,0 +1,94 @@
+Config {
+    scoring: Some(
+        ScoringConfig {
+            base_score: Some(
+                100.0,
+            ),
+            age: Some(
+                "+1 per 1h",
+            ),
+            approvals: Some(
+                "+10 per 1",
+            ),
+            size: Some(
+                SizeConfig {
+                    exclude: Some(
+                        [
+                            "*.lock",
+                            "package-lock.json",
+                        ],
+                    ),
+                    buckets: Some(
+                        [
+                            SizeBucket {
+                                range: "0-9",
+                                effect: "x10",
+                            },
+                            SizeBucket {
+                                range: "10-99",
+                                effect: "x5",
+                            },
+                            SizeBucket {
+                                range: "100-249",
+                                effect: "x1",
+                            },
+                            SizeBucket {
+                                range: "250-499",
+                                effect: "x0.5",
+                            },
+                            SizeBucket {
+                                range: ">=500",
+                                effect: "x0.25",
+                            },
+                        ],
+                    ),
+                },
+            ),
+            labels: Some(
+                [
+                    LabelEffect {
+                        name: "highest priority",
+                        effect: "x10",
+                    },
+                    LabelEffect {
+                        name: "wip",
+                        effect: "x0.5",
+                    },
+                ],
+            ),
+            previously_reviewed: Some(
+                "x2.5",
+            ),
+            draft: Some(
+                "x0.1",
+            ),
+        },
+    ),
+    queries: [
+        QueryConfig {
+            name: Some(
+                "foo/bar PRs needing my attention",
+            ),
+            query: "is:pr is:open review-requested:@me repository:foo/bar",
+            scoring: Some(
+                ScoringConfig {
+                    base_score: Some(
+                        50.0,
+                    ),
+                    age: Some(
+                        "x1.5 per 1d",
+                    ),
+                    approvals: Some(
+                        "+5 per 1",
+                    ),
+                    size: None,
+                    labels: None,
+                    previously_reviewed: None,
+                    draft: None,
+                },
+            ),
+        },
+    ],
+    auto_refresh_interval: 300,
+    theme: "auto",
+}
