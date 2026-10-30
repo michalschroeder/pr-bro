@@ -1,12 +1,14 @@
 mod init;
+mod merge;
 mod schema;
 
 pub use init::run_init_wizard;
+pub use merge::{display_paths, LoadedConfig, QueryOrigin};
 pub use schema::{Config, QueryConfig};
 
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the config directory path (~/.config/pr-bro/)
 pub fn get_config_dir() -> PathBuf {
@@ -47,21 +49,31 @@ pub fn ensure_config_dir() -> Result<()> {
 /// - The YAML cannot be parsed
 pub fn load_config(path: Option<PathBuf>) -> Result<Config> {
     let config_path = path.unwrap_or_else(get_config_path);
+    Ok(load_configs(&[config_path])?.config)
+}
 
-    if !config_path.exists() {
-        anyhow::bail!(
-            "Config file not found at {}. Create ~/.config/pr-bro/config.yaml",
-            config_path.display()
-        );
+/// Load and merge one or more config files, in order. Later files override earlier ones.
+///
+/// Each file is parsed on its own (errors name the file); built-in defaults are
+/// applied once, after merging.
+pub fn load_configs(paths: &[PathBuf]) -> Result<LoadedConfig> {
+    let mut acc = merge::MergedLayers::default();
+    for path in paths {
+        acc = merge::merge(acc, &read_layer(path)?, path);
+    }
+    merge::finish(acc, paths)
+}
+
+fn read_layer(path: &Path) -> Result<merge::ConfigLayer> {
+    if !path.exists() {
+        anyhow::bail!("Config file not found at {}", path.display());
     }
 
-    let config_content = fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config file at {}", path.display()))?;
 
-    let config: Config = serde_saphyr::from_str(&config_content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse config {}: {}", config_path.display(), e))?;
-
-    Ok(config)
+    serde_saphyr::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse config {}: {}", path.display(), e))
 }
 
 #[cfg(test)]
@@ -87,6 +99,57 @@ mod tests {
         let result = load_config(Some(path.clone()));
         let _ = fs::remove_file(&path);
         result
+    }
+
+    #[test]
+    fn test_load_configs_missing_file_among_several_names_it() {
+        let first = unique_config_path("missing-first");
+        let missing = unique_config_path("missing-second");
+        fs::write(&first, "queries: [{query: q}]").unwrap();
+        let err = load_configs(&[first.clone(), missing.clone()]).unwrap_err();
+        let _ = fs::remove_file(&first);
+        assert!(
+            format!("{:#}", err).contains(&missing.display().to_string()),
+            "{:#}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_load_configs_unknown_key_in_later_file_names_it() {
+        let first = unique_config_path("unknown-first");
+        let second = unique_config_path("unknown-second");
+        fs::write(&first, "queries: [{query: q}]").unwrap();
+        fs::write(&second, "queries: [{name: a, querry: q}]").unwrap();
+        let err = format!(
+            "{:#}",
+            load_configs(&[first.clone(), second.clone()]).unwrap_err()
+        );
+        let _ = fs::remove_file(&first);
+        let _ = fs::remove_file(&second);
+        assert!(err.contains(&second.display().to_string()), "{}", err);
+        assert!(err.contains("unknown field `querry`"), "{}", err);
+    }
+
+    #[test]
+    fn test_load_configs_merges_files_in_order() {
+        let team = unique_config_path("order-team");
+        let local = unique_config_path("order-local");
+        fs::write(&team, include_str!("testdata/team.yaml")).unwrap();
+        fs::write(&local, include_str!("testdata/local.yaml")).unwrap();
+        let loaded = load_configs(&[team.clone(), local.clone()]).unwrap();
+        let _ = fs::remove_file(&team);
+        let _ = fs::remove_file(&local);
+        let names: Vec<_> = loaded
+            .config
+            .queries
+            .iter()
+            .map(|q| q.name.as_deref())
+            .collect();
+        assert_eq!(names, [Some("backend"), Some("frontend"), Some("infra")]);
+        assert_eq!(loaded.sources, vec![team.clone(), local.clone()]);
+        assert_eq!(loaded.origins[0].overridden_by, vec![local.clone()]);
+        assert_eq!(loaded.origins[2].source, local);
     }
 
     // Characterization tests: pin the Debug output of today's single-file loader.

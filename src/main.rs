@@ -50,9 +50,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// Path to config file (defaults to ~/.config/pr-bro/config.yaml)
+    /// Path to config file (repeatable; later files override earlier).
+    /// Defaults to ~/.config/pr-bro/config.yaml
     #[arg(short, long, global = true)]
-    config: Option<String>,
+    config: Vec<PathBuf>,
 
     /// Force plain text output even in a terminal
     #[arg(long, global = true)]
@@ -86,7 +87,7 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     let cli = Cli::parse();
-    let config_path_str = cli.config.clone();
+    let config_paths = cli.config.clone();
     let command = cli.command.unwrap_or(Commands::List {
         show_snoozed: false,
     });
@@ -119,8 +120,11 @@ async fn main() {
 
     // Handle init subcommand (before config load)
     if matches!(command, Commands::Init) {
-        let config_path = config_path_str.map(PathBuf::from);
-        match pr_bro::config::run_init_wizard(config_path) {
+        if config_paths.len() > 1 {
+            eprintln!("Init failed: `init` accepts at most one --config path");
+            std::process::exit(EXIT_CONFIG);
+        }
+        match pr_bro::config::run_init_wizard(config_paths.first().cloned()) {
             Ok(()) => std::process::exit(EXIT_SUCCESS),
             Err(e) => {
                 eprintln!("Init failed: {:#}", e);
@@ -129,12 +133,15 @@ async fn main() {
         }
     }
 
-    // Load config (with missing-config wizard prompt)
-    let config_path = config_path_str.as_ref().map(PathBuf::from);
-    let resolved_path = config_path
-        .clone()
-        .unwrap_or_else(pr_bro::config::get_config_path);
-    let config = if !resolved_path.exists() {
+    // Load config (with missing-config wizard prompt when a single file is used)
+    let config_path = config_paths.first().cloned();
+    let resolved_paths = if config_paths.is_empty() {
+        vec![pr_bro::config::get_config_path()]
+    } else {
+        config_paths
+    };
+    let resolved_path = &resolved_paths[0];
+    let loaded = if resolved_paths.len() == 1 && !resolved_path.exists() {
         // Config missing -- offer wizard if interactive terminal
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             eprintln!("No config found at {}", resolved_path.display());
@@ -147,8 +154,7 @@ async fn main() {
                 match pr_bro::config::run_init_wizard(config_path) {
                     Ok(()) => {
                         // Re-load the config that was just written
-                        let reload_path = config_path_str.map(PathBuf::from);
-                        match pr_bro::config::load_config(reload_path) {
+                        match pr_bro::config::load_configs(&resolved_paths) {
                             Ok(c) => c,
                             Err(e) => {
                                 eprintln!("Config error after init: {:#}", e);
@@ -174,7 +180,7 @@ async fn main() {
             std::process::exit(EXIT_CONFIG);
         }
     } else {
-        match pr_bro::config::load_config(config_path) {
+        match pr_bro::config::load_configs(&resolved_paths) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Config error: {:#}", e);
@@ -183,22 +189,55 @@ async fn main() {
         }
     };
 
+    let pr_bro::config::LoadedConfig {
+        config,
+        sources,
+        origins,
+    } = loaded;
+    let multiple_files = sources.len() > 1;
+
     if cli.verbose {
+        if multiple_files {
+            eprintln!("Loaded config files (later override earlier):");
+            for (i, source) in sources.iter().enumerate() {
+                eprintln!("  {}. {}", i + 1, source.display());
+            }
+        }
         eprintln!("Loaded {} queries from config", config.queries.len());
-        for (i, query) in config.queries.iter().enumerate() {
+        for (i, (query, origin)) in config.queries.iter().zip(&origins).enumerate() {
+            let origin_note = if multiple_files {
+                let mut note = format!(" [from {}", origin.source.display());
+                for file in &origin.overridden_by {
+                    note.push_str(&format!(", overridden by {}", file.display()));
+                }
+                note + "]"
+            } else {
+                String::new()
+            };
             eprintln!(
-                "  Query {}: {} ({})",
+                "  Query {}: {} ({}){}",
                 i + 1,
                 query.name.as_deref().unwrap_or("(unnamed)"),
-                query.query
+                query.query,
+                origin_note
             );
         }
     }
 
+    // With several files, scoring errors can only be traced to the merged result
+    let merged_note = if multiple_files {
+        format!(
+            " in merged config from {}",
+            pr_bro::config::display_paths(&sources)
+        )
+    } else {
+        String::new()
+    };
+
     // Validate global scoring config
     let global_scoring = config.scoring.clone().unwrap_or_default();
     if let Err(errors) = pr_bro::scoring::validate_scoring(&global_scoring) {
-        eprintln!("Scoring config errors:");
+        eprintln!("Scoring config errors{}:", merged_note);
         for error in errors {
             eprintln!("  - {}", error);
         }
@@ -209,9 +248,10 @@ async fn main() {
         if let Some(ref scoring) = query.scoring {
             if let Err(errors) = pr_bro::scoring::validate_scoring(scoring) {
                 eprintln!(
-                    "Scoring config errors in query '{}' (index {}):",
+                    "Scoring config errors in query '{}' (index {}){}:",
                     query.name.as_deref().unwrap_or("unnamed"),
-                    i
+                    i,
+                    merged_note
                 );
                 for error in errors {
                     eprintln!("  - {}", error);
@@ -235,16 +275,6 @@ async fn main() {
 
     // Resolve theme from config (before TUI mode, as terminal-light reads stdin)
     let theme = pr_bro::tui::resolve_theme(&config.theme);
-
-    // Check if any queries are configured
-    if config.queries.is_empty() {
-        eprintln!("No queries configured in config file.");
-        eprintln!("Add queries to ~/.config/pr-bro/config.yaml:");
-        eprintln!("  queries:");
-        eprintln!("    - name: my-reviews");
-        eprintln!("      query: \"is:pr review-requested:@me\"");
-        std::process::exit(EXIT_CONFIG);
-    }
 
     // Setup credentials (prompts for token on first run)
     let token = match pr_bro::credentials::setup_token_if_missing() {

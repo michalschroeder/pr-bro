@@ -1,0 +1,9 @@
+# pr-bro.local.yaml (personal, gitignored)
+theme: dark
+scoring:
+  age: "+5 per 1h"            # affects 'frontend' only; 'backend' sets its own age
+queries:
+  - name: backend
+    query: "is:pr is:open repo:acme/api -author:app/dependabot"
+  - name: infra
+    query: "is:pr is:open repo:acme/infra"
