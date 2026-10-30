@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Label-based scoring effect.
 ///
@@ -152,8 +151,9 @@ fn merge_size_configs(
 }
 
 /// Merge label configs by name (case-insensitive).
-/// Query labels override global labels with same name.
-/// Global labels not in query are preserved.
+/// Query labels override global labels with same name, in place.
+/// Global labels not in query are preserved; new query labels are appended.
+/// Order matters because label effects are applied in order.
 fn merge_label_configs(
     global: Option<&Vec<LabelEffect>>,
     query: Option<&Vec<LabelEffect>>,
@@ -162,16 +162,17 @@ fn merge_label_configs(
         (None, g) => g.cloned(),
         (Some(q), None) => Some(q.clone()),
         (Some(q), Some(g)) => {
-            let mut merged: HashMap<String, LabelEffect> = HashMap::new();
-            // Add global labels first (lowercase keys for case-insensitive dedup)
-            for label in g {
-                merged.insert(label.name.to_lowercase(), label.clone());
+            let mut merged: Vec<LabelEffect> = Vec::with_capacity(g.len() + q.len());
+            for label in g.iter().chain(q) {
+                match merged
+                    .iter_mut()
+                    .find(|m| m.name.eq_ignore_ascii_case(&label.name))
+                {
+                    Some(existing) => *existing = label.clone(),
+                    None => merged.push(label.clone()),
+                }
             }
-            // Override with query labels (query wins on collision)
-            for label in q {
-                merged.insert(label.name.to_lowercase(), label.clone());
-            }
-            Some(merged.into_values().collect())
+            Some(merged)
         }
     }
 }
@@ -748,12 +749,12 @@ draft: "x0.1"
 
         let result = merge_scoring_configs(&global, Some(&query));
         let labels = result.labels.unwrap();
-        assert_eq!(labels.len(), 2);
-        // Use find to avoid order dependence (HashMap)
-        let foo = labels.iter().find(|l| l.name == "foo").unwrap();
-        assert_eq!(foo.effect, "+20"); // from query
-        let bar = labels.iter().find(|l| l.name == "bar").unwrap();
-        assert_eq!(bar.effect, "+10"); // preserved from global
+        // Order is kept: overridden labels stay in place
+        let labels: Vec<_> = labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.effect.as_str()))
+            .collect();
+        assert_eq!(labels, [("foo", "+20"), ("bar", "+10")]);
     }
 
     #[test]

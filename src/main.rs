@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::io::{BufRead, IsTerminal, Write as _};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -52,7 +52,7 @@ struct Cli {
 
     /// Path to config file (repeatable; later files override earlier).
     /// Defaults to ~/.config/pr-bro/config.yaml
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     config: Vec<PathBuf>,
 
     /// Force plain text output even in a terminal
@@ -79,6 +79,32 @@ struct Cli {
     command: Option<Commands>,
 }
 
+/// Parse the command line. `--config` is accepted before and after the subcommand.
+/// It is not a clap global arg, because then the values after the subcommand
+/// would replace the ones before it; instead each subcommand gets its own copy
+/// and the two lists are joined in command-line order.
+fn parse_cli() -> Cli {
+    let command = Cli::command();
+    let config_arg = command
+        .get_arguments()
+        .find(|a| a.get_id() == "config")
+        .expect("Cli defines --config")
+        .clone();
+    let matches = command
+        .mut_subcommands(|sub| sub.arg(config_arg.clone()))
+        .get_matches();
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if let Some((_, sub)) = matches.subcommand() {
+        cli.config.extend(
+            sub.get_many::<PathBuf>("config")
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
+    }
+    cli
+}
+
 #[tokio::main]
 async fn main() {
     // Install rustls crypto provider (required for rustls 0.23+)
@@ -86,7 +112,7 @@ async fn main() {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    let cli = Cli::parse();
+    let cli = parse_cli();
     let config_paths = cli.config;
     let command = cli.command.unwrap_or(Commands::List {
         show_snoozed: false,

@@ -66,21 +66,23 @@ pub struct LoadedConfig {
 /// Scalars: later wins if set. Scoring: leaf-level via `merge_scoring_configs`.
 /// Queries: a named query overrides the first earlier query with the same name
 /// (exact match) in place; anything else is appended. Names only match queries
-/// from earlier layers, so duplicate names within one file are all kept.
+/// from earlier layers, and each earlier query is overridden at most once per
+/// layer, so duplicate names within one file are all kept.
 pub(super) fn merge(mut acc: MergedLayers, layer: ConfigLayer, source: &Path) -> MergedLayers {
     acc.theme = layer.theme.or(acc.theme);
     acc.auto_refresh_interval = layer.auto_refresh_interval.or(acc.auto_refresh_interval);
     acc.scoring = merge_scoring(acc.scoring, layer.scoring);
 
-    let earlier = acc.queries.len();
+    let mut overridden = vec![false; acc.queries.len()];
     for q in layer.queries.into_iter().flatten() {
         let existing = q.name.as_ref().and_then(|name| {
-            acc.queries[..earlier]
-                .iter_mut()
-                .find(|e| e.layer.name.as_ref() == Some(name))
+            (0..overridden.len())
+                .find(|&i| !overridden[i] && acc.queries[i].layer.name.as_ref() == Some(name))
         });
         match existing {
-            Some(e) => {
+            Some(i) => {
+                overridden[i] = true;
+                let e = &mut acc.queries[i];
                 e.layer.query = q.query.or(e.layer.query.take());
                 e.layer.scoring = merge_scoring(e.layer.scoring.take(), q.scoring);
                 e.origin.overridden_by.push(source.to_path_buf());
@@ -184,20 +186,6 @@ mod tests {
         finish(acc, &sources)
     }
 
-    /// Debug of a Config with labels sorted, since merged label order is not deterministic.
-    fn normalized(mut config: Config) -> String {
-        fn sort(scoring: &mut Option<ScoringConfig>) {
-            if let Some(labels) = scoring.as_mut().and_then(|s| s.labels.as_mut()) {
-                labels.sort_by(|a, b| a.name.cmp(&b.name));
-            }
-        }
-        sort(&mut config.scoring);
-        for q in &mut config.queries {
-            sort(&mut q.scoring);
-        }
-        format!("{:#?}", config)
-    }
-
     enum Expect {
         /// Merged config equals this single-file config (parsed with today's `Config`)
         Merges(&'static str),
@@ -271,7 +259,7 @@ scoring:
   base_score: 50
   age: "+5 per 1h"
   size: {exclude: [], buckets: [{range: "<100", effect: x2}]}
-  labels: [{name: URGENT, effect: "+50"}, {name: docs, effect: x0.9}, {name: wip, effect: x0.5}]
+  labels: [{name: URGENT, effect: "+50"}, {name: wip, effect: x0.5}, {name: docs, effect: x0.9}]
 queries: [{query: q}]
 "#,
                 ),
@@ -336,6 +324,32 @@ queries:
                 Merges("queries: [{name: a, query: q3}, {name: a, query: q2}]"),
             ),
             (
+                "duplicate earlier names: later duplicates override them pairwise",
+                &[
+                    "queries: [{name: a, query: q1}, {name: a, query: q2}]",
+                    "queries: [{name: a, query: q3}, {name: a, query: q4}]",
+                ],
+                Merges("queries: [{name: a, query: q3}, {name: a, query: q4}]"),
+            ),
+            (
+                "later duplicate name overrides once, then is appended",
+                &[
+                    "queries: [{name: a, query: q0}]",
+                    "queries: [{name: a, query: q1}, {name: a, query: q2}]",
+                ],
+                Merges("queries: [{name: a, query: q1}, {name: a, query: q2}]"),
+            ),
+            (
+                "labels keep order: overrides in place, new ones appended",
+                &[
+                    "scoring: {labels: [{name: urgent, effect: '+20'}, {name: wip, effect: x0.5}]}\nqueries: [{query: q}]",
+                    "scoring: {labels: [{name: docs, effect: x0.9}, {name: Urgent, effect: '+5'}]}",
+                ],
+                Merges(
+                    "scoring: {labels: [{name: Urgent, effect: '+5'}, {name: wip, effect: x0.5}, {name: docs, effect: x0.9}]}\nqueries: [{query: q}]",
+                ),
+            ),
+            (
                 "duplicate names within one file are all kept (single-file behaviour)",
                 &["queries: [{name: a, query: q1}, {name: a, query: q2}]"],
                 Merges("queries: [{name: a, query: q1}, {name: a, query: q2}]"),
@@ -395,7 +409,11 @@ queries:
                     let expected: Config = serde_saphyr::from_str(yaml)
                         .unwrap_or_else(|e| panic!("{name}: bad expected yaml: {e}"));
                     let actual = result.unwrap_or_else(|e| panic!("{name}: {e:#}")).config;
-                    assert_eq!(normalized(actual), normalized(expected), "case: {name}");
+                    assert_eq!(
+                        format!("{actual:#?}"),
+                        format!("{expected:#?}"),
+                        "case: {name}"
+                    );
                 }
                 Fails(parts) => {
                     let err = match result {

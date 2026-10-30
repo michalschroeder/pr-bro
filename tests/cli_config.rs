@@ -64,3 +64,17 @@ fn unknown_key_in_later_config_exits_4_naming_it() {
     assert!(stderr.contains("local.yaml"), "{}", stderr);
     assert!(stderr.contains("unknown field `thme`"), "{}", stderr);
 }
+
+#[test]
+fn configs_before_and_after_subcommand_are_all_loaded() {
+    let dir = unique_dir("split");
+    std::fs::write(dir.join("local.yaml"), "queries: [{query: q}]").unwrap();
+    let out = run(
+        &dir,
+        &["--config", "team.yaml", "list", "--config", "local.yaml"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(EXIT_CONFIG), "{}", stderr);
+    assert!(stderr.contains("team.yaml"), "{}", stderr);
+}
