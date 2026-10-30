@@ -39,6 +39,17 @@ pub fn ensure_config_dir() -> Result<()> {
 ///
 /// Each file is parsed on its own (errors name the file); built-in defaults are
 /// applied once, after merging.
+///
+/// # Arguments
+///
+/// * `paths` - Config files to load, in command-line order
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - A config file does not exist or cannot be read
+/// - The YAML cannot be parsed
+/// - The merged config has no queries, or a query has no `query`
 pub fn load_configs(paths: &[PathBuf]) -> Result<LoadedConfig> {
     let mut acc = merge::MergedLayers::default();
     for path in paths {
@@ -136,7 +147,7 @@ mod tests {
         assert_eq!(loaded.origins[2].source, local);
     }
 
-    // Characterization tests: pin the Debug output of today's single-file loader.
+    // Characterization tests: pin the Debug output of loading a single file.
 
     #[test]
     fn test_characterize_docs_full_example() {

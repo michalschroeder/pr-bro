@@ -13,7 +13,7 @@ use crate::scoring::{merge_scoring_configs, ScoringConfig};
 /// One config file as written, before defaults are applied.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ConfigLayer {
+pub struct ConfigLayer {
     pub scoring: Option<ScoringConfig>,
     pub queries: Option<Vec<QueryLayer>>,
     pub auto_refresh_interval: Option<u64>,
@@ -23,7 +23,7 @@ pub(super) struct ConfigLayer {
 /// One query entry in a layer. `query` may be omitted when overriding an earlier query by name.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub(super) struct QueryLayer {
+pub struct QueryLayer {
     pub name: Option<String>,
     pub query: Option<String>,
     pub scoring: Option<ScoringConfig>,
@@ -40,7 +40,7 @@ pub struct QueryOrigin {
 
 /// Accumulator for merging layers.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(super) struct MergedLayers {
+pub struct MergedLayers {
     pub scoring: Option<ScoringConfig>,
     pub queries: Vec<MergedQuery>,
     pub auto_refresh_interval: Option<u64>,
@@ -48,7 +48,7 @@ pub(super) struct MergedLayers {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct MergedQuery {
+pub struct MergedQuery {
     pub layer: QueryLayer,
     pub origin: QueryOrigin,
 }
@@ -68,7 +68,7 @@ pub struct LoadedConfig {
 /// (exact match) in place; anything else is appended. Names only match queries
 /// from earlier layers, and each earlier query is overridden at most once per
 /// layer, so duplicate names within one file are all kept.
-pub(super) fn merge(mut acc: MergedLayers, layer: ConfigLayer, source: &Path) -> MergedLayers {
+pub fn merge(mut acc: MergedLayers, layer: ConfigLayer, source: &Path) -> MergedLayers {
     acc.theme = layer.theme.or(acc.theme);
     acc.auto_refresh_interval = layer.auto_refresh_interval.or(acc.auto_refresh_interval);
     acc.scoring = merge_scoring(acc.scoring, layer.scoring);
@@ -110,7 +110,7 @@ fn merge_scoring(
 }
 
 /// Apply built-in defaults to the merged layers and check that the result is usable.
-pub(super) fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
+pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
     if acc.queries.is_empty() {
         bail!(
             "No queries configured in {}. Add at least one query, e.g.:\n  queries:\n    - name: my-reviews\n      query: \"is:pr review-requested:@me\"",
@@ -125,11 +125,11 @@ pub(super) fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedCon
             let from = origin.source.display();
             match &q.name {
                 Some(name) => bail!(
-                    "query '{}' (from {}) has no `query` and does not override an earlier query",
+                    "Query '{}' (from {}) has no `query` and does not override an earlier query",
                     name,
                     from
                 ),
-                None => bail!("unnamed query #{} (from {}) has no `query`", i + 1, from),
+                None => bail!("Unnamed query #{} (from {}) has no `query`", i + 1, from),
             }
         };
         queries.push(QueryConfig {
@@ -187,7 +187,7 @@ mod tests {
     }
 
     enum Expect {
-        /// Merged config equals this single-file config (parsed with today's `Config`)
+        /// Merged config equals this config, parsed as a single file with `Config`
         Merges(&'static str),
         /// Merging fails with an error containing all of these substrings
         Fails(&'static [&'static str]),
@@ -383,12 +383,12 @@ queries:
                     "queries: [{name: a, query: qa}]",
                     "queries: [{name: backend, scoring: {draft: x0.5}}]",
                 ],
-                Fails(&["query 'backend'", "f1.yaml", "has no `query`"]),
+                Fails(&["Query 'backend'", "f1.yaml", "has no `query`"]),
             ),
             (
                 "unnamed query without `query` names its file",
                 &["queries: [{scoring: {draft: x0.5}}]"],
-                Fails(&["unnamed query", "f0.yaml", "has no `query`"]),
+                Fails(&["Unnamed query", "f0.yaml", "has no `query`"]),
             ),
             (
                 "zero queries after merge",

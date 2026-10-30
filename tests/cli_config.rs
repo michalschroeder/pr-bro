@@ -32,7 +32,7 @@ fn run(dir: &PathBuf, args: &[&str]) -> Output {
 }
 
 #[test]
-fn missing_file_among_several_configs_exits_4_naming_it() {
+fn test_missing_file_among_several_configs_exits_4_naming_it() {
     let dir = unique_dir("missing");
     std::fs::write(dir.join("team.yaml"), "queries: [{query: q}]").unwrap();
     let out = run(&dir, &["--config", "team.yaml", "--config", "local.yaml"]);
@@ -43,7 +43,7 @@ fn missing_file_among_several_configs_exits_4_naming_it() {
 }
 
 #[test]
-fn init_with_several_configs_exits_4() {
+fn test_init_with_several_configs_exits_4() {
     let dir = unique_dir("init");
     let out = run(&dir, &["init", "--config", "a.yaml", "--config", "b.yaml"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -53,7 +53,7 @@ fn init_with_several_configs_exits_4() {
 }
 
 #[test]
-fn unknown_key_in_later_config_exits_4_naming_it() {
+fn test_unknown_key_in_later_config_exits_4_naming_it() {
     let dir = unique_dir("unknown");
     std::fs::write(dir.join("team.yaml"), "queries: [{query: q}]").unwrap();
     std::fs::write(dir.join("local.yaml"), "thme: dark").unwrap();
@@ -66,7 +66,7 @@ fn unknown_key_in_later_config_exits_4_naming_it() {
 }
 
 #[test]
-fn configs_before_and_after_subcommand_are_all_loaded() {
+fn test_configs_before_and_after_subcommand_are_all_loaded() {
     let dir = unique_dir("split");
     std::fs::write(dir.join("local.yaml"), "queries: [{query: q}]").unwrap();
     let out = run(

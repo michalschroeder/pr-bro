@@ -240,7 +240,7 @@ Every file uses the normal config format, but all keys are optional: a later fil
 | Field | Rule |
 |---|---|
 | `theme`, `auto_refresh_interval` | Later file wins if it sets the field. Defaults (`auto`, `300`) apply only if no file sets it. |
-| `scoring` | Merged at the leaf level, with the same rules as [per-query scoring](#per-query-scoring). |
+| `scoring` | Merged at the leaf level, with the same rules as [per-query scoring](#per-query-scoring). Labels keep their order: an overridden label stays in place and new labels are appended. |
 | `queries` | Merged by `name`, see below. |
 
 A query in a later file whose `name` exactly matches (case-sensitive) an earlier query **overrides** that query:
@@ -248,7 +248,7 @@ A query in a later file whose `name` exactly matches (case-sensitive) an earlier
 - `query` is replaced if the later file sets it. It may be omitted, for example to change only the scoring.
 - `scoring` is merged at the leaf level.
 - The query **keeps its original position**. This matters because scoring is first-match-wins when a PR appears in several queries.
-- If an earlier file has several queries with that name, the first one is overridden.
+- If an earlier file has several queries with that name, the first one is overridden. If the later file repeats the name, each repeat overrides the next earlier query with that name, or is appended once none are left.
 
 A query with a new name, or without a name, is appended after the existing ones. After merging, every query must have a `query` and there must be at least one query.
 
