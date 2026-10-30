@@ -57,6 +57,8 @@ On first run, PR Bro will prompt you with a series of questions to set up your c
 
 For the full list of configuration options, see the [Configuration Reference](docs/configuration.md).
 
+To layer config files (e.g. a shared team config plus a personal override), repeat `--config`; see [Multiple Config Files](docs/configuration.md#multiple-config-files).
+
 Use `pr-bro --help` for all command-line options. Press `?` in the TUI for keyboard shortcuts.
 
 ## Features

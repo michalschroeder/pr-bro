@@ -2,7 +2,7 @@
 
 This document covers the full configuration options for PR Bro. For a quick-start guide, see the [README](../README.md).
 
-Configuration file location: `~/.config/pr-bro/config.yaml`
+Configuration file location: `~/.config/pr-bro/config.yaml` (override with `--config`, which can be repeated; see [Multiple Config Files](#multiple-config-files))
 
 ## Full Configuration Example
 
@@ -220,6 +220,87 @@ In this example, the "urgent" query:
 
 YAML merge keys (`<<:`) are supported by the YAML parser for reducing duplication within your config file. This is a YAML feature processed when reading the file, independent of the runtime merge that combines global and per-query scoring. Note that because PR Bro validates config structure strictly (`deny_unknown_fields`), YAML anchors must be placed inside fields that expect the anchored structure, not at the top level. For advanced YAML anchor/merge-key usage, refer to the [YAML specification](https://yaml.org/type/merge.html).
 
+## Multiple Config Files
+
+`--config` (`-c`) can be repeated. Files are loaded in command-line order and merged, with later files overriding earlier ones. A typical use is a shared config committed to a team repo plus an optional, gitignored personal file:
+
+```bash
+pr-bro --config pr-bro.yaml --config pr-bro.local.yaml
+```
+
+- Relative paths are resolved against the current directory.
+- When `--config` is given, `~/.config/pr-bro/config.yaml` is **not** loaded underneath. Without `--config`, only that file is used.
+- With two or more files, every file must exist; there is no "create one now?" prompt. `pr-bro init` accepts at most one `--config`.
+- Passing a file twice applies it twice.
+
+Every file uses the normal config format, but all keys are optional: a later file may contain only `theme: dark`. Unknown keys are still rejected, and errors name the file they came from.
+
+### Merge Rules
+
+| Field | Rule |
+|---|---|
+| `theme`, `auto_refresh_interval` | Later file wins if it sets the field. Defaults (`auto`, `300`) apply only if no file sets it. |
+| `scoring` | Merged at the leaf level, with the same rules as [per-query scoring](#per-query-scoring). |
+| `queries` | Merged by `name`, see below. |
+
+A query in a later file whose `name` exactly matches (case-sensitive) an earlier query **overrides** that query:
+
+- `query` is replaced if the later file sets it. It may be omitted, for example to change only the scoring.
+- `scoring` is merged at the leaf level.
+- The query **keeps its original position**. This matters because scoring is first-match-wins when a PR appears in several queries.
+- If an earlier file has several queries with that name, the first one is overridden.
+
+A query with a new name, or without a name, is appended after the existing ones. After merging, every query must have a `query` and there must be at least one query.
+
+Things to keep in mind:
+
+- **Specificity beats file order.** A query's own `scoring.age` still beats a later file's top-level `scoring.age`. To change that query, override it by name.
+- **If any file sets `scoring`, the built-in scoring defaults no longer apply**, just as with a single file. This holds even if only a later file sets `scoring`. Copy the fields you want to keep.
+- **Nothing can be unset.** Leaving a field out (or setting it to `null`) inherits the earlier value. Set a neutral value instead, for example `size: { exclude: [] }` or a label with effect `x1`.
+- **Queries can't be removed.** Override the query by name with a search that returns nothing. It still costs one GitHub search call per refresh. To hide some PRs of a query, narrow its search instead, e.g. append `-author:app/dependabot` or `-label:wip`.
+
+`pr-bro -v` lists the loaded files and, for each query, which file it came from and which files overrode it.
+
+### Example
+
+```yaml
+# pr-bro.yaml (team, committed)
+scoring:
+  age: "+1 per 1h"
+queries:
+  - name: backend
+    query: "is:pr is:open repo:acme/api"
+    scoring:
+      age: "+2 per 1h"
+  - name: frontend
+    query: "is:pr is:open repo:acme/web"
+```
+
+```yaml
+# pr-bro.local.yaml (personal, gitignored)
+theme: dark
+scoring:
+  age: "+5 per 1h"            # affects 'frontend' only; 'backend' sets its own age
+queries:
+  - name: backend
+    query: "is:pr is:open repo:acme/api -author:app/dependabot"
+  - name: infra
+    query: "is:pr is:open repo:acme/infra"
+```
+
+Merged result: theme `dark`, refresh interval `300`, global `age: "+5 per 1h"`, and queries in this order:
+
+1. `backend`, with the new search string, keeping its own `age: "+2 per 1h"`
+2. `frontend`
+3. `infra`
+
+To pass the local file only when it exists, e.g. in a Makefile:
+
+```make
+pr-bro:
+	pr-bro --config pr-bro.yaml $(if $(wildcard pr-bro.local.yaml),--config pr-bro.local.yaml)
+```
+
 ## Theme
 
 PR Bro supports light and dark color themes. The default is `auto`, which detects your terminal's background color at startup and selects the appropriate palette.
@@ -237,6 +318,7 @@ If auto-detection fails (e.g., over SSH or in tmux), it falls back to the dark t
 PR Bro validates your configuration at startup with clear error messages:
 
 - **Unknown YAML keys** are rejected (catches typos like `approvalls` instead of `approvals`)
+- **Missing queries** are rejected: at least one query is required, and every query needs a `query`
 - **Overlapping size bucket ranges** are rejected (prevents ambiguous scoring)
 - **Invalid effect syntax** is caught with helpful messages
 - **Empty label names** are rejected
