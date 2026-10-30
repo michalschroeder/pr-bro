@@ -13,7 +13,7 @@ use crate::scoring::{merge_scoring_configs, ScoringConfig};
 /// One config file as written, before defaults are applied.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct ConfigLayer {
+pub(super) struct ConfigLayer {
     pub scoring: Option<ScoringConfig>,
     pub queries: Option<Vec<QueryLayer>>,
     pub auto_refresh_interval: Option<u64>,
@@ -23,7 +23,7 @@ pub struct ConfigLayer {
 /// One query entry in a layer. `query` may be omitted when overriding an earlier query by name.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct QueryLayer {
+pub(super) struct QueryLayer {
     pub name: Option<String>,
     pub query: Option<String>,
     pub scoring: Option<ScoringConfig>,
@@ -40,7 +40,7 @@ pub struct QueryOrigin {
 
 /// Accumulator for merging layers.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct MergedLayers {
+pub(super) struct MergedLayers {
     pub scoring: Option<ScoringConfig>,
     pub queries: Vec<MergedQuery>,
     pub auto_refresh_interval: Option<u64>,
@@ -48,10 +48,8 @@ pub struct MergedLayers {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MergedQuery {
-    pub name: Option<String>,
-    pub query: Option<String>,
-    pub scoring: Option<ScoringConfig>,
+pub(super) struct MergedQuery {
+    pub layer: QueryLayer,
     pub origin: QueryOrigin,
 }
 
@@ -59,8 +57,6 @@ pub struct MergedQuery {
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub config: Config,
-    /// Files that were loaded, in order
-    pub sources: Vec<PathBuf>,
     /// Origin of each query, parallel to `config.queries`
     pub origins: Vec<QueryOrigin>,
 }
@@ -71,28 +67,26 @@ pub struct LoadedConfig {
 /// Queries: a named query overrides the first earlier query with the same name
 /// (exact match) in place; anything else is appended. Names only match queries
 /// from earlier layers, so duplicate names within one file are all kept.
-pub fn merge(mut acc: MergedLayers, layer: &ConfigLayer, source: &Path) -> MergedLayers {
-    acc.theme = layer.theme.clone().or(acc.theme);
+pub(super) fn merge(mut acc: MergedLayers, layer: ConfigLayer, source: &Path) -> MergedLayers {
+    acc.theme = layer.theme.or(acc.theme);
     acc.auto_refresh_interval = layer.auto_refresh_interval.or(acc.auto_refresh_interval);
-    acc.scoring = merge_scoring(acc.scoring, layer.scoring.as_ref());
+    acc.scoring = merge_scoring(acc.scoring, layer.scoring);
 
     let earlier = acc.queries.len();
-    for q in layer.queries.iter().flatten() {
+    for q in layer.queries.into_iter().flatten() {
         let existing = q.name.as_ref().and_then(|name| {
             acc.queries[..earlier]
                 .iter_mut()
-                .find(|e| e.name.as_ref() == Some(name))
+                .find(|e| e.layer.name.as_ref() == Some(name))
         });
         match existing {
             Some(e) => {
-                e.query = q.query.clone().or(e.query.take());
-                e.scoring = merge_scoring(e.scoring.take(), q.scoring.as_ref());
+                e.layer.query = q.query.or(e.layer.query.take());
+                e.layer.scoring = merge_scoring(e.layer.scoring.take(), q.scoring);
                 e.origin.overridden_by.push(source.to_path_buf());
             }
             None => acc.queries.push(MergedQuery {
-                name: q.name.clone(),
-                query: q.query.clone(),
-                scoring: q.scoring.clone(),
+                layer: q,
                 origin: QueryOrigin {
                     source: source.to_path_buf(),
                     overridden_by: Vec::new(),
@@ -105,16 +99,16 @@ pub fn merge(mut acc: MergedLayers, layer: &ConfigLayer, source: &Path) -> Merge
 
 fn merge_scoring(
     earlier: Option<ScoringConfig>,
-    later: Option<&ScoringConfig>,
+    later: Option<ScoringConfig>,
 ) -> Option<ScoringConfig> {
     match (earlier, later) {
-        (Some(a), Some(b)) => Some(merge_scoring_configs(&a, Some(b))),
-        (a, b) => b.cloned().or(a),
+        (Some(a), Some(b)) => Some(merge_scoring_configs(&a, Some(&b))),
+        (a, b) => b.or(a),
     }
 }
 
 /// Apply built-in defaults to the merged layers and check that the result is usable.
-pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
+pub(super) fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
     if acc.queries.is_empty() {
         bail!(
             "No queries configured in {}. Add at least one query, e.g.:\n  queries:\n    - name: my-reviews\n      query: \"is:pr review-requested:@me\"",
@@ -124,9 +118,9 @@ pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
 
     let mut queries = Vec::with_capacity(acc.queries.len());
     let mut origins = Vec::with_capacity(acc.queries.len());
-    for (i, q) in acc.queries.into_iter().enumerate() {
+    for (i, MergedQuery { layer: q, origin }) in acc.queries.into_iter().enumerate() {
         let Some(query) = q.query else {
-            let from = q.origin.source.display();
+            let from = origin.source.display();
             match &q.name {
                 Some(name) => bail!(
                     "query '{}' (from {}) has no `query` and does not override an earlier query",
@@ -141,7 +135,7 @@ pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
             query,
             scoring: q.scoring,
         });
-        origins.push(q.origin);
+        origins.push(origin);
     }
 
     Ok(LoadedConfig {
@@ -153,7 +147,6 @@ pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
                 .unwrap_or_else(default_refresh_interval),
             theme: acc.theme.unwrap_or_else(default_theme),
         },
-        sources: sources.to_vec(),
         origins,
     })
 }
@@ -186,7 +179,7 @@ mod tests {
             .iter()
             .zip(&sources)
             .fold(MergedLayers::default(), |acc, (yaml, src)| {
-                merge(acc, &layer(yaml), src)
+                merge(acc, layer(yaml), src)
             });
         finish(acc, &sources)
     }
@@ -421,28 +414,10 @@ queries:
     fn test_merge_empty_layer_is_identity() {
         let acc = merge(
             MergedLayers::default(),
-            &layer(include_str!("testdata/docs_full_example.yaml")),
+            layer(include_str!("testdata/docs_full_example.yaml")),
             &source(0),
         );
-        assert_eq!(merge(acc.clone(), &ConfigLayer::default(), &source(1)), acc);
-    }
-
-    #[test]
-    fn test_single_layer_matches_single_file_snapshots() {
-        let fixtures = [
-            (
-                include_str!("testdata/docs_full_example.yaml"),
-                include_str!("testdata/docs_full_example.debug"),
-            ),
-            (
-                include_str!("testdata/no_scoring.yaml"),
-                include_str!("testdata/no_scoring.debug"),
-            ),
-        ];
-        for (yaml, debug) in fixtures {
-            let loaded = merge_all(&[yaml]).unwrap();
-            assert_eq!(format!("{:#?}", loaded.config), debug.trim_end());
-        }
+        assert_eq!(merge(acc.clone(), ConfigLayer::default(), &source(1)), acc);
     }
 
     #[test]
@@ -470,7 +445,6 @@ queries:
                 },
             ]
         );
-        assert_eq!(loaded.sources, vec![source(0), source(1), source(2)]);
     }
 
     #[test]

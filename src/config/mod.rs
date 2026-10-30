@@ -35,23 +35,6 @@ pub fn ensure_config_dir() -> Result<()> {
     Ok(())
 }
 
-/// Load configuration from a YAML file
-///
-/// # Arguments
-///
-/// * `path` - Optional path to config file. If None, uses default path (~/.config/pr-bro/config.yaml)
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The config file does not exist
-/// - The config file cannot be read
-/// - The YAML cannot be parsed
-pub fn load_config(path: Option<PathBuf>) -> Result<Config> {
-    let config_path = path.unwrap_or_else(get_config_path);
-    Ok(load_configs(&[config_path])?.config)
-}
-
 /// Load and merge one or more config files, in order. Later files override earlier ones.
 ///
 /// Each file is parsed on its own (errors name the file); built-in defaults are
@@ -59,18 +42,20 @@ pub fn load_config(path: Option<PathBuf>) -> Result<Config> {
 pub fn load_configs(paths: &[PathBuf]) -> Result<LoadedConfig> {
     let mut acc = merge::MergedLayers::default();
     for path in paths {
-        acc = merge::merge(acc, &read_layer(path)?, path);
+        acc = merge::merge(acc, read_layer(path)?, path);
     }
     merge::finish(acc, paths)
 }
 
 fn read_layer(path: &Path) -> Result<merge::ConfigLayer> {
-    if !path.exists() {
-        anyhow::bail!("Config file not found at {}", path.display());
-    }
-
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file at {}", path.display()))?;
+    let content = match fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("Config file not found at {}", path.display())
+        }
+        result => {
+            result.with_context(|| format!("Failed to read config file at {}", path.display()))?
+        }
+    };
 
     serde_saphyr::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config {}: {}", path.display(), e))
@@ -92,11 +77,11 @@ mod tests {
         ))
     }
 
-    /// Write `yaml` to a unique temp file and load it with the single-file loader.
+    /// Write `yaml` to a unique temp file and load it on its own.
     fn load_yaml(test_name: &str, yaml: &str) -> Result<Config> {
         let path = unique_config_path(test_name);
         fs::write(&path, yaml).unwrap();
-        let result = load_config(Some(path.clone()));
+        let result = load_configs(std::slice::from_ref(&path)).map(|loaded| loaded.config);
         let _ = fs::remove_file(&path);
         result
     }
@@ -147,7 +132,6 @@ mod tests {
             .map(|q| q.name.as_deref())
             .collect();
         assert_eq!(names, [Some("backend"), Some("frontend"), Some("infra")]);
-        assert_eq!(loaded.sources, vec![team.clone(), local.clone()]);
         assert_eq!(loaded.origins[0].overridden_by, vec![local.clone()]);
         assert_eq!(loaded.origins[2].source, local);
     }

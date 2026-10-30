@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::scoring::ScoringConfig;
 
-pub(crate) fn default_refresh_interval() -> u64 {
+pub(super) fn default_refresh_interval() -> u64 {
     300
 }
 
-pub(crate) fn default_theme() -> String {
+pub(super) fn default_theme() -> String {
     "auto".to_string()
 }
 

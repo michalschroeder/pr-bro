@@ -87,7 +87,7 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     let cli = Cli::parse();
-    let config_paths = cli.config.clone();
+    let config_paths = cli.config;
     let command = cli.command.unwrap_or(Commands::List {
         show_snoozed: false,
     });
@@ -134,7 +134,6 @@ async fn main() {
     }
 
     // Load config (with missing-config wizard prompt when a single file is used)
-    let config_path = config_paths.first().cloned();
     let resolved_paths = if config_paths.is_empty() {
         vec![pr_bro::config::get_config_path()]
     } else {
@@ -151,7 +150,7 @@ async fn main() {
             let _ = std::io::stdin().lock().read_line(&mut answer);
             let answer = answer.trim().to_lowercase();
             if answer.is_empty() || answer == "y" || answer == "yes" {
-                match pr_bro::config::run_init_wizard(config_path) {
+                match pr_bro::config::run_init_wizard(Some(resolved_path.clone())) {
                     Ok(()) => {
                         // Re-load the config that was just written
                         match pr_bro::config::load_configs(&resolved_paths) {
@@ -189,17 +188,13 @@ async fn main() {
         }
     };
 
-    let pr_bro::config::LoadedConfig {
-        config,
-        sources,
-        origins,
-    } = loaded;
-    let multiple_files = sources.len() > 1;
+    let pr_bro::config::LoadedConfig { config, origins } = loaded;
+    let multiple_files = resolved_paths.len() > 1;
 
     if cli.verbose {
         if multiple_files {
             eprintln!("Loaded config files (later override earlier):");
-            for (i, source) in sources.iter().enumerate() {
+            for (i, source) in resolved_paths.iter().enumerate() {
                 eprintln!("  {}. {}", i + 1, source.display());
             }
         }
@@ -228,7 +223,7 @@ async fn main() {
     let merged_note = if multiple_files {
         format!(
             " in merged config from {}",
-            pr_bro::config::display_paths(&sources)
+            pr_bro::config::display_paths(&resolved_paths)
         )
     } else {
         String::new()
