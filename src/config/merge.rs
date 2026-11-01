@@ -120,16 +120,17 @@ pub fn finish(acc: MergedLayers, sources: &[PathBuf]) -> Result<LoadedConfig> {
 
     let mut queries = Vec::with_capacity(acc.queries.len());
     let mut origins = Vec::with_capacity(acc.queries.len());
-    for (i, MergedQuery { layer: q, origin }) in acc.queries.into_iter().enumerate() {
+    for MergedQuery { layer: q, origin } in acc.queries {
         let Some(query) = q.query else {
             let from = origin.source.display();
             match &q.name {
-                Some(name) => bail!(
+                Some(name) if sources.len() > 1 => bail!(
                     "Query '{}' (from {}) has no `query` and does not override an earlier query",
                     name,
                     from
                 ),
-                None => bail!("Unnamed query #{} (from {}) has no `query`", i + 1, from),
+                Some(name) => bail!("Query '{}' (from {}) has no `query`", name, from),
+                None => bail!("An unnamed query (from {}) has no `query`", from),
             }
         };
         queries.push(QueryConfig {
@@ -388,7 +389,7 @@ queries:
             (
                 "unnamed query without `query` names its file",
                 &["queries: [{scoring: {draft: x0.5}}]"],
-                Fails(&["Unnamed query", "f0.yaml", "has no `query`"]),
+                Fails(&["unnamed query", "f0.yaml", "has no `query`"]),
             ),
             (
                 "zero queries after merge",

@@ -164,10 +164,8 @@ fn merge_label_configs(
         (Some(q), Some(g)) => {
             let mut merged: Vec<LabelEffect> = Vec::with_capacity(g.len() + q.len());
             for label in g.iter().chain(q) {
-                match merged
-                    .iter_mut()
-                    .find(|m| m.name.eq_ignore_ascii_case(&label.name))
-                {
+                let key = label.name.to_lowercase();
+                match merged.iter_mut().find(|m| m.name.to_lowercase() == key) {
                     Some(existing) => *existing = label.clone(),
                     None => merged.push(label.clone()),
                 }
@@ -791,6 +789,29 @@ draft: "x0.1"
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].name, "urgent"); // query case preserved
         assert_eq!(labels[0].effect, "+20"); // query value wins
+    }
+
+    #[test]
+    fn test_merge_labels_case_insensitive_unicode() {
+        let label = |name: &str, effect: &str| LabelEffect {
+            name: name.to_string(),
+            effect: effect.to_string(),
+        };
+        let global = ScoringConfig {
+            labels: Some(vec![label("Équipe", "+10"), label("bar", "+5")]),
+            ..Default::default()
+        };
+        let query = ScoringConfig {
+            labels: Some(vec![label("équipe", "+50")]),
+            ..Default::default()
+        };
+
+        let labels = merge_scoring_configs(&global, Some(&query)).labels.unwrap();
+        let labels: Vec<_> = labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.effect.as_str()))
+            .collect();
+        assert_eq!(labels, [("équipe", "+50"), ("bar", "+5")]);
     }
 
     #[test]
