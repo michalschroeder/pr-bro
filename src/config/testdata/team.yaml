@@ -1,0 +1,10 @@
+# pr-bro.yaml (team, committed)
+scoring:
+  age: "+1 per 1h"
+queries:
+  - name: backend
+    query: "is:pr is:open repo:acme/api"
+    scoring:
+      age: "+2 per 1h"
+  - name: frontend
+    query: "is:pr is:open repo:acme/web"

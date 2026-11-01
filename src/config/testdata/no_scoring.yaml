@@ -1,0 +1,4 @@
+queries:
+  - name: mine
+    query: "is:pr is:open author:@me"
+  - query: "is:pr is:open repo:acme/api"

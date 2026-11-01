@@ -1,0 +1,40 @@
+# Theme: "auto" (default, detects terminal), "dark", or "light"
+theme: auto
+
+# Auto-refresh interval in seconds (default: 300 = 5 minutes)
+auto_refresh_interval: 300
+
+# Global scoring configuration (applies to all queries unless overridden)
+scoring:
+  base_score: 100
+  age: "+1 per 1h"       # Adds 1 point per hour of age
+  approvals: "+10 per 1"  # Adds 10 points per approval
+  size:
+    exclude: ["*.lock", "package-lock.json"]
+    buckets:
+      - range: "0-9"
+        effect: "x10"     # Extremely small PRs get a huge boost
+      - range: "10-99"
+        effect: "x5"      # Small PRS get a decent boost
+      - range: "100-249"
+        effect: "x1"      # Medium PRs: no change
+      - range: "250-499"
+        effect: "x0.5"    # Large PRs get a decent penalty
+      - range: ">=500"
+        effect: "x0.25"   # Extremely large PRs get a huge penalty
+  labels:
+    - name: "highest priority"
+      effect: "x10"
+    - name: "wip"
+      effect: "x0.5"
+  previously_reviewed: "x2.5"  # Previously reviewed PRs get a boost
+  draft: "x0.1"               # Deprioritize draft PRs
+
+# Queries to execute (at least one required)
+queries:
+  - name: "foo/bar PRs needing my attention"
+    query: "is:pr is:open review-requested:@me repository:foo/bar"
+    scoring:               # Per-query scoring (merges with global)
+      base_score: 50
+      age: "x1.5 per 1d"  # Gets a x1.5 boost per day of age
+      approvals: "+5 per 1"

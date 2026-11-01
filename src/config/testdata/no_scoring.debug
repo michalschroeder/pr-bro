@@ -1,0 +1,19 @@
+Config {
+    scoring: None,
+    queries: [
+        QueryConfig {
+            name: Some(
+                "mine",
+            ),
+            query: "is:pr is:open author:@me",
+            scoring: None,
+        },
+        QueryConfig {
+            name: None,
+            query: "is:pr is:open repo:acme/api",
+            scoring: None,
+        },
+    ],
+    auto_refresh_interval: 300,
+    theme: "auto",
+}
